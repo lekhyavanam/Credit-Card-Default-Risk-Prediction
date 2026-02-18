@@ -1,1 +1,446 @@
 
+---
+title: "Project: Default of Credit Card Clients"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  md_document:
+  word_document: default
+editor_options: 
+  chunk_output_type: console
+---
+
+# Background or Introduction
+
+Remove me and write your interesting story in the first section. Predicting the default of credit card clients is super important because it helps financial institutions manage risks. By using data mining and machine learning, they can analyze patterns and behavior to identify clients who are likely to default on their payments. This allows them to take proactive measures like adjusting credit limits or offering financial counseling to prevent defaults and minimize financial losses.
+
+For example, if a bank can predict that a certain client is at high risk of defaulting on their credit card payments based on their spending habits and payment history, they can reach out and offer assistance before the situation escalates.
+
+Understanding and predicting defaults is crucial for maintaining a healthy financial system and protecting both the lenders and the borrowers. It's all about using data and technology to make informed decisions and mitigate potential risks in the financial domain. 
+
+(You can also pretend another role, such as credit card holder who is interested in understanding how the payment history or spending habits will affect the default probability. Please carefully review my grading rubric. It has the instruction for the points assigned for each each section. You should have the required analyses and interpretation/explanation to earn the corresponding points. If any required analyses are missing, the points will be deducted.)
+
+# Data Wrangling
+
+Data wrangling is like preparing ingredients before cooking a delicious meal - it involves transforming and cleaning raw data into a format that is easier to work with for analysis. In the context of a credit default dataset, data wrangling could involve tasks like creating new variables based on existing ones, manipulating data to fill in missing values, or converting data types to make them more suitable for analysis. This process ensures that the data is organized and structured in a way that allows us to draw meaningful insights and make accurate predictions regarding credit defaults.
+
+
+The original research of this dataset employed a binary variable, default payment (Yes = 1, No = 0, name = default.payment.next.month), as the response variable. For this case study, one can use the following 23 variables as explanatory variables:
+
+- LIMIT_BAL: Amount of the given credit (NT dollar): it includes both the individual consumer credit and his/her family (supplementary) credit.
+- SEX: Gender (1 = male; 2 = female).
+- EDUCATION: Education (1 = graduate school; 2 = university; 3 = high school; 4 = others).
+- MARRIAGE: Marital status (1 = married; 2 = single; 3 = others).
+- AGE: Age (year).
+- PAY_0 ~ PAY_6: History of past payment. We tracked the past monthly payment records (from April to September, 2005) as follows: 
+- PAY_0 = the repayment status in September, 2005; 
+- PAY_2 = the repayment status in August, 2005; . . .;
+- PAY_6 = the repayment status in April, 2005. 
+- The measurement scale for the repayment status is: -1 = pay duly; 1 = payment delay for one month; 2 = payment delay for two months; . . .; 8 = payment delay for eight months; 9 = payment delay for nine months and above.
+- BILL_AMT1 ~ PAY_AMT6: Amount of bill statement (NT dollar). 
+- BILL_AMT1 = amount of bill statement in September, 2005; 
+- BILL_AMT2 = amount of bill statement in August, 2005; 
+- . . .; 
+- BILL_AMT6 = amount of bill statement in April, 2005. 
+- PAY_AMT1 ~ PAY_AMT6: Amount of previous payment (NT dollar). 
+- PAY_AMT1 = amount paid in September, 2005; 
+- PAY_AMT2 = amount paid in August, 2005; 
+- . . .;
+- PAY_AMT6 = amount paid in April, 2005.
+
+
+```{r}
+# Importing credit card clients data from a CSV file hosted online.
+# The 'read.csv()' function is used to read the data from the specified URL.
+# 'header=T' indicates that the first row of the CSV file contains column names.
+credit_default <- read.csv(file = "https://xiaorui.site/Data-Mining-R/lecture/data/credit_default.csv", header = TRUE)
+colnames(credit_default)
+table(credit_default$default.payment.next.month)
+```
+
+> Question: Is the response variable name too long? You need to refer to this name many times when you analyze the data, draw visualization plots, build the model. So what you should do? 
+
+> Hint: Think about the 'dplyr' package we have covered. 
+
+```{r}
+library(dplyr)
+credit_default <- rename(credit_default, default='default.payment.next.month')
+table(credit_default$PAY_0)
+```
+
+## Constructing new variables
+
+Let's delve into a practical scenario for managing this data. Suppose we aim to craft a new variable that captures the cumulative bill statement amount for each client over the past three months. To accomplish this, we'll engage in data wrangling by executing mathematical operations on the existing variables representing the bill amounts for the three preceding months. How can we approach this task effectively? 
+
+> Hint: Think about the 'mutate' function in 'dplyr' package. Or you can ask for help from our robot tutor. 
+
+```{r}
+# Create a new variable named 'BILL_AMT1_to_3' by summing up the bill amounts 
+# for the first three months (BILL_AMT1, BILL_AMT2, and BILL_AMT3) for each observation
+credit_default2 <- 
+  mutate(credit_default, 
+         BILL_AMT1_to_3 = BILL_AMT1 + BILL_AMT2 + BILL_AMT3)
+
+summary(credit_default$BILL_AMT1_to_3)
+```
+
+## Creating sub-samples for specific needs
+
+Consider another pragmatic scenario concerning a subset of credit clients. Imagine your company or bank intends to prioritize single clients over married ones, as they rely solely on a single income source, potentially limiting their ability to make payments. In such a scenario, how would you go about refining the dataset to generate a subset for your subsequent analysis?
+
+```{r}
+# Create a subset 'credit_single' containing observations for clients who are single
+credit_single <- 
+  filter(credit_default, MARRIAGE == 2)
+
+# Create a subset 'credit_married' containing observations for clients who are married
+credit_married <- 
+  filter(credit_default, MARRIAGE == 1)
+
+
+# Generate summary statistics for the 'PAY_AMT1' variable for single clients
+summary(credit_single$PAY_AMT1)
+
+# Generate summary statistics for the 'PAY_AMT1' variable for married clients
+summary(credit_married$PAY_AMT1)
+```
+
+# Exploratory Analyses & Visualization
+
+### 1. Exploring the distribution of the dependent/independent variables
+
+```{r}
+summary(credit_default)
+
+# Draw a pie chart to show the proportion of default clients
+pie(table(credit_default$default))
+```
+
+> Question: Is this pie chart lacking appeal and clarity? How can we enhance its visual presentation? Our robot tutor is ready to assist you; just ask the right question!
+> 
+> "make this pie chart fancier: pie(table(credit_default$default))"
+
+```{r}
+# Create a pie chart with customized colors, labels, and a title
+default_table <- table(credit_default$default)
+colors <- c("#FF9999", "#66B2FF")  # Define custom colors for the slices
+labels <- c("Not Default", "Default")  # Define custom labels for the slices
+percentages <- round(default_table / sum(default_table) * 100, 1)  # Calculate percentages
+pie(default_table, 
+    col = colors, 
+    labels = paste(labels, "\n (", percentages, "%)"),  # Include percentages in labels
+    main = "Credit Default Status")
+legend("topright", legend = labels, fill = colors, cex = 0.8)
+```
+
+Write your rough exploratory analyses of the data (Remove me and write your own). You might strategically select results to shape your interpretation; it's unnecessary to use them all. Instead, choose compelling findings that enhance the smooth flow of your story.
+
+```{r}
+# Create a histogram to visualize the distribution of ages in the dataset
+hist(credit_default$AGE, main = "Distribution of Age")
+
+# Create a histogram to visualize the distribution of balance limits in the dataset
+hist(credit_default$LIMIT_BAL, main = "Distribution of Balance Limit")
+```
+
+> Question: Numerous outliers are evident, dampening the informativeness of the comparison. Wondering what to do with them? Our robot tutor is at your service for assistance.
+
+Write your interpretation of the histogram of the numeric variables that you want to emphasize (Remove me and write your own).
+
+```{r}
+# Generate a table to display the frequency of each education level in the dataset
+table(credit_default$EDUCATION)
+
+# Create a bar plot to visualize the frequency of each education level
+barplot(table(credit_default$EDUCATION))
+
+# Generate a table to display the frequency of each gender in the dataset
+table(credit_default$SEX)
+```
+
+Write your interpretation of the frequency table of the categorical variables that you want to emphasize (Remove me and write your own).
+
+### 2. Exploring the association between default indicator and other numerical variables
+
+Exploring the association between a binary variable and a numerical variable is slightly harder than the association between two numerical variables (salary vs age). You can try box plots or compare the summary statistics of the numerical variable separately for each level of the binary variable.   
+
+```{r}
+# Exploring the association between default indicator and other numerical variables
+boxplot(credit_default$AGE ~ credit_default$default, horizontal = T)
+boxplot(credit_default$BILL_AMT1 ~ credit_default$default, horizontal = T)
+```
+
+Write your interpretation here (Remove me and write your own).
+
+### 3. Exploring the association between default indicator and categorical variables
+
+Exploring the association between a binary variable (such as a default indicator) and a categorical variable involves several analytical methods and visualization techniques. For example, frequency tables, bar charts, 
+
+```{r}
+# 3. Exploring the association between Salary and categorical variables
+table(credit_default$default, credit_default$SEX, 
+      dnn = c("Default or not","Sex: Gender (1 = male; 2 = female)")) 
+
+# Create a contingency table of default status and marital status
+myNewTable <- table(credit_default$default, credit_default$MARRIAGE) 
+
+# Convert the contingency table into proportions
+prop.table(myNewTable) 
+
+# Create a stacked bar chart
+barplot(myNewTable, 
+        col=c('blue','red'),  # Define colors for the bars
+        legend= paste("Default = ", rownames(myNewTable)),  
+        # Add legend with default status labels
+        xlab="Marital status",  # Label for x-axis
+        ylab = "Count")  # Label for y-axis
+```
+
+Write your interpretation here (Remove me and write your own).
+
+```{r, eval=FALSE, echo=FALSE}
+# Load the 'vcd' package for mosaic plot function
+# install.packages("vcd")
+library(vcd)
+
+# Create a mosaic plot
+mosaicplot(table(credit_default$MARRIAGE, credit_default$default), 
+           main = "Mosaic Plot of Default vs. MARRIAGE",
+           color = c("blue", "red"))  # Optional: Customize colors
+```
+
+
+# Building Models
+
+## Preparing the training and testing datasets
+
+I decided to use the `credit_single` dataset to speed up the development of a complex model, such as a neural network. Since the `credit_default` dataset is quite large, with 12,000 observations, training a complex neural network in R could take a quite long time.
+
+```{r}
+# Normalize the numerical variables 
+var_used <- c("LIMIT_BAL", "AGE", 
+              "PAY_0", "PAY_2", "PAY_3", 
+              "PAY_4", "PAY_5", "PAY_6",
+              "BILL_AMT1", "BILL_AMT2", "BILL_AMT3",
+              "BILL_AMT4", "BILL_AMT5", "BILL_AMT6",
+              "PAY_AMT1", "PAY_AMT2", "PAY_AMT3",
+              "PAY_AMT4", "PAY_AMT5", "PAY_AMT6")
+
+# Calculate the column-wise maximum ('maxs') and minimum ('mins') values for all numerical columns, excluding the first three columns.
+maxs <- apply(credit_default[,var_used], 2, max)
+mins <- apply(credit_default[,var_used], 2, min)
+
+# Normalize the numerical data using min-max scaling and update 'credit_single_scaled'.
+# - 'center = mins' ensures the data is centered to start at its minimum values.
+# - 'scale = maxs - mins' scales the data to range from 0 to 1.
+credit_default_scaled <- credit_default
+credit_default_scaled[,var_used] <- 
+  as.data.frame(scale(credit_default[,var_used], 
+                      center = mins, 
+                      scale = maxs - mins))
+
+# Split the data into training and testing sets:
+# - 'sample_index' contains randomly selected row indices for training, covering 70% of the entire dataset.
+# - 'credit_train' contains the training subset of 'credit_single_scaled'.
+# - 'credit_test' contains the remaining 30% as the testing subset.
+# sample_index <- sample(nrow(credit_single_scaled), nrow(credit_single_scaled) * 0.70)
+# credit_train <- credit_single_scaled[sample_index,]
+# credit_test <- credit_single_scaled[-sample_index,]
+
+# Split training and testing datasets to make sure static results
+credit_train <- credit_default_scaled[1:8400,]
+credit_test <- credit_default_scaled[8401:12000,]
+table(credit_train$default)
+table(credit_test$default)
+```
+
+## First Method: Logistic regression models
+
+### A simple model based on your intuition: only select a few relevant predictors 
+
+```{r}
+# Build a model based on your intuition: only select a few relevant predictors 
+DefaultModel1 <- 
+  glm(default ~ LIMIT_BAL + SEX + MARRIAGE + AGE + PAY_0 + BILL_AMT1 + PAY_AMT1,
+     data = credit_train)
+
+summary(DefaultModel1, digits = 3)
+```
+
+Create table to present the model's results and write your interpretation here (Remove me and write your own).
+
+### A simple model without imposing any constraints on predictor selection
+
+```{r}
+# Build a simple model without imposing any constraints on predictor selection
+DefaultModelFull <- 
+  glm(default ~ .,
+     data = credit_train, 
+     family = "binomial")
+
+summary(DefaultModelFull, digits = 3)
+```
+
+Write your interpretations of the model results here (Remove me and write your own).
+
+
+### Advanced model development: Interaction variables
+
+You might explore other models by fitting several different ones for the same response variable. Then, you can compare them with the previous model using measures like goodness-of-fit R-squared, AIC, or BIC to determine the best one (Remove me and write your own).
+
+```{r}
+# A potential model with interaction term
+DefaultModel_inter <- 
+  glm(default ~ . + AGE * MARRIAGE,
+     data = credit_train, 
+     family = "binomial")
+
+summary(DefaultModel_inter, digits = 3)
+```
+
+> Question: what is your finding for this AGE*MARRIAGE interaction term?
+
+Write your interpretation here (Remove me and write your own).
+
+### Advanced model development: nonlinear term
+
+```{r}
+# Fit a logistic regression model with quadratic age term
+DefaultModel_quad <- 
+  glm(default ~ . + I(AGE^2),  # Formula including quadratic term for age
+     data = credit_train,  # Dataset
+     family = "binomial")  # Binomial family for binary outcome
+summary(DefaultModel_quad, digits = 3)  # Summary of model with 3 significant digits
+
+
+# Fit a logistic regression model with quadratic PAY_AMT1 term
+DefaultModel_quad2 <- 
+  glm(default ~ . + I(PAY_AMT1^2),  # Formula including quadratic term for PAY_AMT1
+     data = credit_train,  # Dataset
+     family = "binomial")  # Binomial family for binary outcome
+summary(DefaultModel_quad2, digits = 3)  # Summary of model with 3 significant digits
+```
+
+> Question: what is your finding for this AGE*MARRIAGE interaction term?
+
+Write your interpretation here (Remove me and write your own).
+
+### Evaluating the logistic regression model 
+
+1. In-sample AUC-ROC (or training set)
+
+```{r}
+# Predicted probability for training set
+pred_train_logit <- predict(DefaultModel_quad2, newdata = credit_train, type="response")
+
+library(ROCR)
+# This line of code creates a prediction object 'pred' using the 'prediction()' 
+pred_obj_train_logit <- prediction(pred_train_logit, credit_train$default)
+
+# This line of code calculates True Positive Rate (TPR) and False Positive Rate
+# (FPR) based on the prediction object 'pred_obj_train' using the 'performance()'
+# function from the 'ROCR' package. 
+# It stores the resulting performance object in the variable 'perf_train'.
+perf_train_logit <- performance(pred_obj_train_logit, "tpr", "fpr")
+
+# Draw the ROC curve
+plot(perf_train_logit, colorize=TRUE)
+
+# This line of code calculates the Area Under the ROC Curve (AUC) using the 'performance()' function with "auc" as the argument. 
+# It extracts the AUC value from the resulting performance object and returns it as
+# a numeric value.
+# The 'unlist()' function is used to convert the AUC value from a list to a numeric vector.
+unlist(slot(performance(pred_obj_train_logit, "auc"), "y.values"))
+```
+
+2. Out-of-sample AUC-ROC performance (testing set is more important)
+
+```{r}
+# Predicted probability for testing set
+pred_test_logit <- predict(DefaultModel_quad2, newdata = credit_test, type="response")
+
+library(ROCR)
+# This line of code creates a prediction object 'pred' using the 'prediction()' 
+pred_obj_test_logit <- prediction(pred_test_logit, credit_test$default)
+
+perf_test_logit <- performance(pred_obj_test_logit, "tpr", "fpr")
+
+# Draw the ROC curve
+plot(perf_test_logit, colorize=TRUE)
+
+# This line of code calculates the Area Under the ROC Curve (AUC) using the 'performance()' function with "auc" as the argument. 
+unlist(slot(performance(pred_obj_test_logit, "auc"), "y.values"))
+```
+
+
+## Second Method: Neural Network
+
+In this section, this template will illustrate how to develop the neural network classification model (since the response is a binary response, it is a classification problem). I choose to only use the significant variables observed from the logistics regression. Using all predictors could also make the training time too long.  
+
+```{r}
+library(neuralnet)
+default_nn1 <- 
+  neuralnet(formula = default ~ ., 
+            data = credit_train, 
+            hidden = c(3), 
+            linear.output = FALSE)
+
+plot(default_nn1)
+```
+
+### Evaluating the neural network model
+
+We calculate the AUC-ROC for the training set. 
+
+```{r}
+# Predicted probability for training set
+pred_train_nn1 <- predict(default_nn1, newdata = credit_train, type="response")
+
+library(ROCR)
+# This line of code creates a prediction object 'pred' using the 'prediction()' 
+pred_obj_train_nn1 <- ROCR::prediction(pred_train_nn1, credit_train$default)
+
+# This line of code calculates True Positive Rate (TPR) and False Positive Rate
+# (FPR) based on the prediction object 'pred_obj_train' using the 'performance()'
+# function from the 'ROCR' package. 
+# It stores the resulting performance object in the variable 'perf_train'.
+perf_train_nn1 <- performance(pred_obj_train_nn1, "tpr", "fpr")
+
+plot(perf_train_nn1, colorize=TRUE)
+
+# This line of code calculates the Area Under the ROC Curve (AUC) using the 'performance()' function with "auc" as the argument. 
+# It extracts the AUC value from the resulting performance object and returns it as
+# a numeric value.
+# The 'unlist()' function is used to convert the AUC value from a list to a numeric vector.
+unlist(slot(performance(pred_obj_train_nn1, "auc"), "y.values"))
+```
+
+
+2. Out-of-sample AUC-ROC performance (testing set is more important)
+
+```{r}
+# Predicted probability for testing set
+pred_test_nn1 <- predict(default_nn1, newdata = credit_test, type="response")
+
+library(ROCR)
+# This line of code creates a prediction object 'pred' using the 'prediction()' 
+pred_obj_test_nn1 <- ROCR::prediction(pred_test_nn1, credit_test$default)
+
+perf_test_nn1 <- performance(pred_obj_test_nn1, "tpr", "fpr")
+
+# Draw the ROC curve
+plot(perf_test_nn1, colorize=TRUE)
+
+# This line of code calculates the Area Under the ROC Curve (AUC) using the 'performance()' function with "auc" as the argument. 
+unlist(slot(performance(pred_obj_test_nn1, "auc"), "y.values"))
+```
+
+
+# Conclusion
+
+## Compare your two groups of methods
+
+The logistic regression model `DefaultModel_quad2` performs less effectively out-of-sample compared to the neural network model `default_nn1`. Specifically, the logistic regression model achieves an AUC of 0.731 on the testing set, whereas the neural network model achieves a higher AUC of 0.758 on the same testing dataset (Remove me and write your own).
+
+## Provide suggestions
+
+## Discuss the limitations of your analysis
