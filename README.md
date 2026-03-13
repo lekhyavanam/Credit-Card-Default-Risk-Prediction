@@ -1,12 +1,6 @@
 
 ---
-title: "Project: Default of Credit Card Clients"
-date: "`r format(Sys.time(), '%d %B, %Y')`"
-output:
-  md_document:
-  word_document: default
-editor_options: 
-  chunk_output_type: console
+Default of Credit Card Clients
 ---
 
 # Background or Introduction
