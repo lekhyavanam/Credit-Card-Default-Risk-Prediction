@@ -1,0 +1,449 @@
+---
+title: "Project: Default of Credit Card Clients"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  md_document:
+  word_document: default
+editor_options: 
+  chunk_output_type: console
+---
+
+## Setup and data
+
+Place `credit_default.csv` beside this notebook. Required packages are `dplyr`,
+`ROCR`, `neuralnet`, `knitr`, and `rmarkdown`.
+
+```{r setup}
+knitr::opts_chunk$set(error = FALSE, fig.width = 8, fig.height = 5)
+library(dplyr)
+library(ROCR)
+library(neuralnet)
+credit_default <- read.csv("credit_default.csv")
+credit_default <- rename(credit_default, default = default.payment.next.month)
+stopifnot(!anyNA(credit_default), all(credit_default$default %in% 0:1))
+# Explicit categories preserve nominal rather than numeric relationships.
+credit_default$SEX <- factor(credit_default$SEX, levels = c(1, 2),
+                             labels = c("Male", "Female"))
+credit_default$EDUCATION <- factor(credit_default$EDUCATION, levels = 1:4,
+                                  labels = c("Graduate", "University", "HighSchool", "Other"))
+credit_default$MARRIAGE <- factor(credit_default$MARRIAGE, levels = 1:3,
+                                 labels = c("Married", "Single", "Other"))
+stopifnot(!anyNA(credit_default))
+table(credit_default$default)
+```
+
+Repayment-status variables retain their original numeric codes. The supplied
+notebook documents −1 as payment made duly and positive values as months of
+payment delay, but does not establish the definitions of −2 and 0. These codes
+are retained without assigning new meanings; numeric modeling assumes a common
+ordered scale and should be compared with categorical encoding in future work.
+
+## Constructing new variables
+
+```{r}
+# Create a new variable named 'BILL_AMT1_to_3' by summing up the bill amounts 
+# for the first three months (BILL_AMT1, BILL_AMT2, and BILL_AMT3) for each observation
+credit_default2 <- 
+  mutate(credit_default, 
+         BILL_AMT1_to_3 = BILL_AMT1 + BILL_AMT2 + BILL_AMT3)
+
+summary(credit_default2$BILL_AMT1_to_3)
+```
+
+## Creating sub-samples for specific needs
+
+```{r}
+# Create a subset 'credit_single' containing observations for clients who are single
+credit_single <- 
+  filter(credit_default, MARRIAGE == "Single")
+
+# Create a subset 'credit_married' containing observations for clients who are married
+credit_married <- 
+  filter(credit_default, MARRIAGE == "Married")
+
+
+# Generate summary statistics for the 'PAY_AMT1' variable for single clients
+summary(credit_single$PAY_AMT1)
+
+# Generate summary statistics for the 'PAY_AMT1' variable for married clients
+summary(credit_married$PAY_AMT1)
+```
+
+# Exploratory Analyses & Visualization
+
+### 1. Exploring the distribution of the dependent/independent variables
+
+```{r}
+summary(credit_default)
+
+# Draw a pie chart to show the proportion of default clients
+pie(table(credit_default$default))
+```
+
+```{r}
+# Create a pie chart with customized colors, labels, and a title
+default_table <- table(credit_default$default)
+colors <- c("#FF9999", "#66B2FF")  # Define custom colors for the slices
+labels <- c("Not Default", "Default")  # Define custom labels for the slices
+percentages <- round(default_table / sum(default_table) * 100, 1)  # Calculate percentages
+pie(default_table, 
+    col = colors, 
+    labels = paste(labels, "\n (", percentages, "%)"),  # Include percentages in labels
+    main = "Credit Default Status")
+legend("topright", legend = labels, fill = colors, cex = 0.8)
+```
+
+```{r}
+# Create a histogram to visualize the distribution of ages in the dataset
+hist(credit_default$AGE, main = "Distribution of Age")
+
+# Create a histogram to visualize the distribution of balance limits in the dataset
+hist(credit_default$LIMIT_BAL, main = "Distribution of Balance Limit")
+```
+
+```{r}
+# Generate a table to display the frequency of each education level in the dataset
+table(credit_default$EDUCATION)
+
+# Create a bar plot to visualize the frequency of each education level
+barplot(table(credit_default$EDUCATION))
+
+# Generate a table to display the frequency of each gender in the dataset
+table(credit_default$SEX)
+```
+
+### 2. Exploring the association between default indicator and other numerical variables
+
+```{r}
+# Exploring the association between default indicator and other numerical variables
+boxplot(credit_default$AGE ~ credit_default$default, horizontal = T)
+boxplot(credit_default$BILL_AMT1 ~ credit_default$default, horizontal = T)
+```
+
+### 3. Exploring the association between default indicator and categorical variables
+
+Counts describe sample composition; within-group proportions describe observed default rates. 
+
+```{r}
+# Compare observed default status across categories
+table(credit_default$default, credit_default$SEX, 
+      dnn = c("Default or not","Sex: Gender (1 = male; 2 = female)")) 
+
+# Create a contingency table of default status and marital status
+myNewTable <- table(credit_default$default, credit_default$MARRIAGE) 
+
+# Convert the contingency table into proportions
+prop.table(myNewTable, margin = 2) 
+
+# Create a stacked bar chart
+barplot(myNewTable, 
+        col=c('blue','red'),  # Define colors for the bars
+        legend= paste("Default = ", rownames(myNewTable)),  
+        # Add legend with default status labels
+        xlab="Marital status",  # Label for x-axis
+        ylab = "Count")  # Label for y-axis
+```
+
+# Building Models
+
+## Preparing the training and testing datasets
+
+The full customer sample is split randomly within each outcome class using a
+fixed seed. Scaling is fitted on training rows only. Test values may lie outside
+[0, 1]; they are not clipped. The exploratory bill-total variable is not modeled.
+
+```{r prepare}
+set.seed(20260915)
+by_class <- split(seq_len(nrow(credit_default)), credit_default$default)
+sample_index <- sort(unlist(lapply(by_class, function(i) sample(i, round(length(i) * 0.70)))))
+train_raw <- credit_default[sample_index, ]
+test_raw <- credit_default[-sample_index, ]
+stopifnot(length(intersect(sample_index, setdiff(seq_len(nrow(credit_default)), sample_index))) == 0)
+var_used <- c("LIMIT_BAL", "AGE", "PAY_0", "PAY_2", "PAY_3", "PAY_4", "PAY_5", "PAY_6",
+              paste0("BILL_AMT", 1:6), paste0("PAY_AMT", 1:6))
+fit_scaler <- function(data) {
+  mins <- vapply(data[var_used], min, numeric(1))
+  ranges <- vapply(data[var_used], max, numeric(1)) - mins
+  ranges[ranges == 0] <- 1
+  list(mins = mins, ranges = ranges)
+}
+apply_scaler <- function(data, scaler) {
+  data[var_used] <- as.data.frame(scale(data[var_used], center = scaler$mins, scale = scaler$ranges))
+  data
+}
+scaler <- fit_scaler(train_raw)
+credit_train <- apply_scaler(train_raw, scaler)
+credit_test <- apply_scaler(test_raw, scaler)
+rbind(Training = table(credit_train$default), Testing = table(credit_test$default))
+```
+
+## First Method: Logistic regression models
+
+### A simple model based on your intuition: only select a few relevant predictors 
+
+```{r}
+# Build a model based on your intuition: only select a few relevant predictors 
+DefaultModel1 <- 
+  glm(default ~ LIMIT_BAL + SEX + MARRIAGE + AGE + PAY_0 + BILL_AMT1 + PAY_AMT1,
+     data = credit_train, family = "binomial")
+
+summary(DefaultModel1, digits = 3)
+```
+
+### A simple model without imposing any constraints on predictor selection
+
+```{r}
+# Build a simple model without imposing any constraints on predictor selection
+DefaultModelFull <- 
+  glm(default ~ .,
+     data = credit_train, 
+     family = "binomial")
+
+summary(DefaultModelFull, digits = 3)
+```
+
+### Advanced model development: Interaction variables
+
+```{r}
+# A potential model with interaction term
+DefaultModel_inter <- 
+  glm(default ~ . + AGE * MARRIAGE,
+     data = credit_train, 
+     family = "binomial")
+
+summary(DefaultModel_inter, digits = 3)
+```
+
+### Advanced model development: nonlinear term
+
+```{r}
+# Fit a logistic regression model with quadratic age term
+DefaultModel_quad <- 
+  glm(default ~ . + I(AGE^2),  # Formula including quadratic term for age
+     data = credit_train,  # Dataset
+     family = "binomial")  # Binomial family for binary outcome
+summary(DefaultModel_quad, digits = 3)  # Summary of model with 3 significant digits
+
+
+# Fit a logistic regression model with quadratic PAY_AMT1 term
+DefaultModel_quad2 <- 
+  glm(default ~ . + I(PAY_AMT1^2),  # Formula including quadratic term for PAY_AMT1
+     data = credit_train,  # Dataset
+     family = "binomial")  # Binomial family for binary outcome
+summary(DefaultModel_quad2, digits = 3)  # Summary of model with 3 significant digits
+```
+
+### Evaluating the logistic regression model 
+
+1. In-sample AUC-ROC (or training set)
+
+```{r}
+# Predicted probability for training set
+pred_train_logit <- predict(DefaultModel_quad2, newdata = credit_train, type="response")
+
+library(ROCR)
+# This line of code creates a prediction object 'pred' using the 'ROCR::prediction()' 
+pred_obj_train_logit <- ROCR::prediction(pred_train_logit, credit_train$default)
+
+# This line of code calculates True Positive Rate (TPR) and False Positive Rate
+# (FPR) based on the prediction object 'pred_obj_train' using the 'performance()'
+# function from the 'ROCR' package. 
+# It stores the resulting performance object in the variable 'perf_train'.
+perf_train_logit <- performance(pred_obj_train_logit, "tpr", "fpr")
+
+# Draw the ROC curve
+plot(perf_train_logit, colorize=TRUE)
+
+# This line of code calculates the Area Under the ROC Curve (AUC) using the 'performance()' function with "auc" as the argument. 
+# It extracts the AUC value from the resulting performance object and returns it as
+# a numeric value.
+# The 'unlist()' function is used to convert the AUC value from a list to a numeric vector.
+unlist(slot(performance(pred_obj_train_logit, "auc"), "y.values"))
+```
+
+2. Out-of-sample AUC-ROC performance (testing set is more important)
+
+```{r}
+# Predicted probability for testing set
+pred_test_logit <- predict(DefaultModel_quad2, newdata = credit_test, type="response")
+
+library(ROCR)
+# This line of code creates a prediction object 'pred' using the 'ROCR::prediction()' 
+pred_obj_test_logit <- ROCR::prediction(pred_test_logit, credit_test$default)
+
+perf_test_logit <- performance(pred_obj_test_logit, "tpr", "fpr")
+
+# Draw the ROC curve
+plot(perf_test_logit, colorize=TRUE)
+
+# This line of code calculates the Area Under the ROC Curve (AUC) using the 'performance()' function with "auc" as the argument. 
+unlist(slot(performance(pred_obj_test_logit, "auc"), "y.values"))
+```
+
+
+## Second Method: Neural Network
+
+Categorical predictors are represented by indicator columns using the same
+training-derived design specification for both partitions. The network retains
+one hidden layer with three neurons.
+
+```{r neural-network}
+nn_terms <- terms(~ ., data = credit_train[, setdiff(names(credit_train), "default")])
+x_train <- model.matrix(nn_terms, credit_train)[, -1, drop = FALSE]
+x_test <- model.matrix(nn_terms, credit_test)[, -1, drop = FALSE]
+colnames(x_train) <- make.names(colnames(x_train), unique = TRUE)
+colnames(x_test) <- make.names(colnames(x_test), unique = TRUE)
+stopifnot(identical(colnames(x_train), colnames(x_test)))
+nn_train <- data.frame(default = credit_train$default, x_train)
+set.seed(20260916)
+default_nn1 <- neuralnet(default ~ ., data = nn_train,
+                         hidden = 3, linear.output = FALSE)
+if (is.null(default_nn1$result.matrix)) stop("Neural network did not converge; no results reported.")
+plot(default_nn1)
+```
+
+### Evaluating the neural network model
+
+We calculate the AUC-ROC for the training set. 
+
+```{r}
+# Predicted probability for training set
+pred_train_nn1 <- as.vector(predict(default_nn1, newdata = as.data.frame(x_train)))
+
+library(ROCR)
+# This line of code creates a prediction object 'pred' using the 'ROCR::prediction()' 
+pred_obj_train_nn1 <- ROCR::prediction(pred_train_nn1, credit_train$default)
+
+# This line of code calculates True Positive Rate (TPR) and False Positive Rate
+# (FPR) based on the prediction object 'pred_obj_train' using the 'performance()'
+# function from the 'ROCR' package. 
+# It stores the resulting performance object in the variable 'perf_train'.
+perf_train_nn1 <- performance(pred_obj_train_nn1, "tpr", "fpr")
+
+plot(perf_train_nn1, colorize=TRUE)
+
+# This line of code calculates the Area Under the ROC Curve (AUC) using the 'performance()' function with "auc" as the argument. 
+# It extracts the AUC value from the resulting performance object and returns it as
+# a numeric value.
+# The 'unlist()' function is used to convert the AUC value from a list to a numeric vector.
+unlist(slot(performance(pred_obj_train_nn1, "auc"), "y.values"))
+```
+
+
+2. Out-of-sample AUC-ROC performance (testing set is more important)
+
+```{r}
+# Predicted probability for testing set
+pred_test_nn1 <- as.vector(predict(default_nn1, newdata = as.data.frame(x_test)))
+
+library(ROCR)
+# This line of code creates a prediction object 'pred' using the 'ROCR::prediction()' 
+pred_obj_test_nn1 <- ROCR::prediction(pred_test_nn1, credit_test$default)
+
+perf_test_nn1 <- performance(pred_obj_test_nn1, "tpr", "fpr")
+
+# Draw the ROC curve
+plot(perf_test_nn1, colorize=TRUE)
+
+# This line of code calculates the Area Under the ROC Curve (AUC) using the 'performance()' function with "auc" as the argument. 
+unlist(slot(performance(pred_obj_test_nn1, "auc"), "y.values"))
+```
+
+
+# Model evaluation summary
+
+The logistic specification was retained from the original project rather than
+selected using test performance. A threshold of 0.5 is illustrative and was not
+tuned on the test set. Brier score measures squared probability error (lower is
+better); the calibration table compares average predictions with observed rates.
+
+```{r metrics}
+auc_value <- function(p, y) as.numeric(performance(ROCR::prediction(p, y), "auc")@y.values[[1]])
+metrics <- function(p, y) {
+  stopifnot(length(p) == length(y), all(is.finite(p)), all(p >= 0 & p <= 1))
+  labels <- as.integer(p >= 0.5)
+  tp <- sum(labels == 1 & y == 1); fp <- sum(labels == 1 & y == 0)
+  fn <- sum(labels == 0 & y == 1)
+  c(AUC = auc_value(p, y), Accuracy = mean(labels == y),
+    Recall = tp / (tp + fn), Precision = if (tp + fp == 0) NA_real_ else tp / (tp + fp),
+    Brier = mean((p - y)^2))
+}
+results <- rbind(
+  Logistic_training = metrics(pred_train_logit, credit_train$default),
+  Logistic_testing = metrics(pred_test_logit, credit_test$default),
+  Neural_network_training = metrics(pred_train_nn1, credit_train$default),
+  Neural_network_testing = metrics(pred_test_nn1, credit_test$default))
+knitr::kable(results, digits = 4)
+calibration <- function(p, y) {
+  bins <- cut(p, breaks = seq(0, 1, 0.1), include.lowest = TRUE)
+  aggregate(data.frame(Predicted = p, Observed = y), list(Probability_bin = bins), mean)
+}
+calibration(pred_test_logit, credit_test$default)
+calibration(pred_test_nn1, credit_test$default)
+```
+
+## Logistic stability within the training data
+
+Five stratified folds assess the retained logistic specification without using
+the held-out test set. Scaling is fitted separately within each fold. This is
+not a cross-validation comparison of the two model families; the neural network
+is evaluated using a single seeded holdout run.
+
+```{r cross-validation}
+set.seed(20260917)
+fold <- integer(nrow(train_raw))
+for (value in 0:1) {
+  idx <- which(train_raw$default == value)
+  fold[idx] <- sample(rep(1:5, length.out = length(idx)))
+}
+cv_auc <- vapply(1:5, function(k) {
+  fold_train <- train_raw[fold != k, ]; fold_valid <- train_raw[fold == k, ]
+  fold_scaler <- fit_scaler(fold_train)
+  fold_train <- apply_scaler(fold_train, fold_scaler)
+  fold_valid <- apply_scaler(fold_valid, fold_scaler)
+  fit <- glm(default ~ . + I(PAY_AMT1^2), data = fold_train, family = binomial())
+  auc_value(predict(fit, fold_valid, type = "response"), fold_valid$default)
+}, numeric(1))
+data.frame(Fold = 1:5, AUC = cv_auc)
+```
+
+# Conclusion
+
+On the held-out test set, logistic regression achieved AUC
+`r sprintf("%.4f", results["Logistic_testing", "AUC"])`, and the neural network
+achieved AUC `r sprintf("%.4f", results["Neural_network_testing", "AUC"])`.
+These values are generated from the current run. Higher AUC indicates better
+ranking of defaulting versus non-defaulting customers on this split; it does
+not demonstrate why one model performs better or establish consistent superiority.
+
+The mean five-fold training-validation AUC for the logistic specification was
+`r sprintf("%.4f", mean(cv_auc))` (fold standard deviation
+`r sprintf("%.4f", sd(cv_auc))`).
+
+## Business interpretation and limitations
+
+The models provide a starting point for studying default-risk scoring. This
+analysis does not establish which predictors are strongest or demonstrate that
+behavioral variables outperform demographics. Operational use would require
+validation on representative current customers, threshold selection based on
+error costs, and further calibration assessment.
+
+The network uses one initialization and a small architecture without systematic
+tuning. Its holdout result is not a repeated cross-validation estimate. The
+historical sample may not generalize to other institutions or periods, and
+income, employment, and broader economic conditions are not included.
+Repayment codes are modeled numerically, an assumption worth testing separately.
+
+## Reproducibility
+
+```{r save-results}
+dir.create("results", showWarnings = FALSE)
+write.csv(data.frame(Model = rownames(results), results, row.names = NULL),
+          "results/model_metrics.csv", row.names = FALSE)
+write.csv(data.frame(Fold = 1:5, AUC = cv_auc), "results/logistic_cv.csv", row.names = FALSE)
+write.csv(data.frame(Row = seq_len(nrow(credit_default)),
+                     Partition = ifelse(seq_len(nrow(credit_default)) %in% sample_index, "Training", "Testing")),
+          "results/data_split.csv", row.names = FALSE)
+writeLines(capture.output(sessionInfo()), "results/session_info.txt")
+sessionInfo()
+```
