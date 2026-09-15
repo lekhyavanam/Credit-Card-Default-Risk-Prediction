@@ -1,129 +1,160 @@
-
----
-
-# Credit Card Default Prediction (R)
+# Credit Card Default Prediction in R
 
 ## Project Overview
 
-This project analyzes credit card client data to predict the likelihood that a customer will default on their payment in the following month. Financial institutions rely on these predictions to manage lending risk, adjust credit limits, and proactively support customers who may be at risk of missing payments.
+This project explores credit card customer data and builds models to predict whether a customer will default on their payment in the following month.
 
-Using historical customer financial and repayment behavior data, this project applies statistical modeling and exploratory data analysis to identify patterns associated with default risk.
-
-The main objective is to build predictive models that estimate the probability of a client defaulting on their credit card payment next month.
+The analysis combines data preparation, exploratory visualization, logistic regression, and a neural network. Its goal is to examine customer characteristics and compare how well the models distinguish defaulting from non-defaulting customers.
 
 ## Dataset
 
-The dataset contains information about credit card clients, their financial attributes, and repayment history.
+The project dataset contains **12,000 customers**, **23 predictors**, and one binary outcome. No missing values were detected in the supplied CSV.
 
-The target variable is:
-**default.payment.next.month**
+The original target variable, `default.payment.next.month`, is renamed to `default` during analysis:
 
-Indicates whether the client defaulted on their credit card payment in the following month.
+- **0:** No default
+- **1:** Default
 
-1 = client defaulted on payment
-0 = client did not default
+The data describes credit card customers in Taiwan, including repayment history from April through September 2005. Monetary variables are recorded in New Taiwan dollars.
+
+The notebook imports its data from this [teaching dataset](https://xiaorui.site/Data-Mining-R/lecture/data/credit_default.csv). The original dataset is documented by the [UCI Machine Learning Repository](https://archive.ics.uci.edu/dataset/350/default%2Bof%2Bcredit%2Bcard%2Bclients); this project uses a 12,000-record version.
+
+## Data Preparation and Exploration
+
+The R Markdown workflow:
+
+- Renames the target variable to `default`.
+- Creates subsets of single and married customers for exploratory summaries.
+- Creates `BILL_AMT1_to_3`, the sum of three recent bill statements, in a separate exploratory data object.
+- Examines default frequency, age, credit limits, education, and gender.
+- Uses boxplots to compare age and recent bill amounts by default status.
+- Examines default status alongside gender and marital status.
+- Applies min–max scaling to credit limit, age, repayment-status variables, bill amounts, and payment amounts.
+
+The three-month bill total is created for exploration but is not included in the fitted models.
+
+## Training and Testing Setup
+
+The code uses a fixed split based on row position:
+
+| Dataset | Observations | Defaults | Non-defaults |
+|---|---:|---:|---:|
+| Training: rows 1–8,400 | 8,400 | 1,832 | 6,568 |
+| Testing: rows 8,401–12,000 | 3,600 | 800 | 2,800 |
+| Total | 12,000 | 2,632 | 9,368 |
+
+This is a 70% training and 30% testing split. Rows are not randomly sampled.
 
 ## Modeling Approach
 
-This project compares two approaches for predicting credit card default: **logistic regression** and a **neural network**. Both models estimate whether a customer will default on their payment in the following month based on historical financial, demographic, and repayment behavior.
+### Logistic Regression
 
-### Model 1: Logistic Regression
+The notebook explores several binomial logistic regression specifications:
 
-Logistic regression was used as an interpretable statistical approach for estimating default probability. Multiple specifications were explored, including additional predictors, interaction terms, and quadratic terms to capture nonlinear relationships between customer characteristics and default risk.
+- All 23 predictors.
+- All predictors plus an age–marital-status interaction.
+- All predictors plus a squared age term.
+- All predictors plus a squared recent-payment term.
 
-The final logistic regression model (`DefaultModel_quad2`) achieved a **test AUC of 0.731**.
+The final evaluated logistic specification, `DefaultModel_quad2`, includes all predictors and `I(PAY_AMT1^2)`. It does not also include the interaction or squared age term from the other specifications.
 
-### Model 2: Neural Network
+The notebook also contains an initial seven-predictor model, `DefaultModel1`. As currently written, it omits the binomial family and therefore fits a Gaussian model rather than logistic regression.
 
-A neural network (`default_nn1`) was developed to capture more complex and nonlinear relationships among the predictors that may not be fully represented by logistic regression.
+### Neural Network
 
-The neural network achieved a **test AUC of 0.758**, outperforming the final logistic regression model on the testing dataset.
+The neural network, `default_nn1`, uses all 23 predictors with:
 
-## Results at a Glance
+- One hidden layer.
+- Three hidden neurons.
+- A nonlinear output using `linear.output = FALSE`.
 
-| Metric                       |        Result |
-| ---------------------------- | ------------: |
-| Testing observations         |        12,000 |
-| Defaults                     | 2,632 (21.9%) |
-| Non-defaults                 | 9,368 (78.1%) |
-| Logistic Regression Test AUC |         0.731 |
-| Neural Network Test AUC      |     **0.758** |
+Both the final logistic model and neural network are evaluated using ROC curves and area under the ROC curve, or AUC. AUC measures how well model scores distinguish defaults from non-defaults across classification thresholds.
+
+## Model Results
+
+A verification run using the supplied CSV, the notebook’s preprocessing, and its existing row split produced:
+
+| Model | Training AUC | Testing AUC |
+|---|---:|---:|
+| Logistic regression: `DefaultModel_quad2` | 0.7273 | 0.7308 |
+| Neural network: `default_nn1` | 0.7785 | 0.7700 |
+
+The neural network verification run used `set.seed(20260915)`, R 4.4.2, and `neuralnet` 1.44.2. The uploaded notebook does not currently set this seed.
+
+The notebook’s conclusion states a neural-network test AUC of 0.758. That value was not reproduced in this verification run. Neural-network results can vary with random initialization.
+
+The neural network achieved higher test AUC in this run. Repeated evaluation would be needed to assess how consistently it outperforms logistic regression.
 
 ## Key Findings
 
-- **Default represented 21.9% of the testing data**, with 2,632 defaults among 12,000 observations.
-- **The neural network provided stronger out-of-sample discrimination**, achieving a test AUC of 0.758 compared with 0.731 for the final logistic regression model.
-- **Repayment behavior emerged as an important signal of default risk**, demonstrating the value of historical customer payment behavior when assessing future credit risk.
+- **Defaults are the minority outcome.** There are 2,632 observed defaults among 12,000 customers, representing 21.9% of the dataset. The test-set default rate is 22.2%.
+- **The customer population is concentrated among younger and middle-aged adults.** Median age is 34, and 72.5% of customers are aged 21–40. This describes the sample and does not establish that younger customers have greater default risk.
+- **University education is the most common education category.** It accounts for 5,596 customers, or 46.6% of the dataset.
+- **The final logistic model’s test AUC was reproduced at approximately 0.731.** The neural network achieved 0.770 in the seeded verification run, showing stronger discrimination on this particular test set.
 
-## Real-World Application & Industry Context
+## Limitations
 
-Within the 12,000-observation testing dataset, **2,632 customers (21.9%) experienced default**, while 9,368 (78.1%) did not, highlighting the importance of identifying high-risk customers before missed payments escalate.
+- **Preprocessing uses the full dataset.** Scaling minima and maxima are calculated before the split, allowing test-set information into preprocessing.
+- **Evaluation uses one fixed row split.** Performance may depend on the ordering of the data. The notebook does not use cross-validation.
+- **Neural-network fitting is not seeded in the uploaded code.** Results may differ between runs.
+- **Categorical predictors retain numeric codes.** Education and marital status are not explicitly converted to factors, so their numeric treatment imposes relationships between categories.
+- **AUC does not establish operational usefulness.** The workflow does not evaluate calibration, decision costs, or recall and precision at a chosen classification threshold.
+- **The data represents a historical customer population.** Performance on other institutions or current customers has not been established.
 
-The neural network achieved a test **AUC of 0.758**, compared with **0.731 for logistic regression**, representing a 0.027 improvement in discriminatory performance. The higher AUC indicates that the neural network provided **better out-of-sample discrimination between defaulting and non-defaulting customers** than the final logistic regression model.
+## Potential Application
 
-For comparison, U.S. commercial banks reported a credit card delinquency rate of approximately **2.85% in Q2 2026**. These figures are not directly comparable—the project's target measures next-month default while industry delinquency statistics use different definitions and reporting periods—but they provide context for the real-world importance of credit-risk detection.
+Credit-default models can support research into account monitoring and customer outreach. Applying this workflow to lending decisions would require further validation, updated data, and evaluation of prediction thresholds and their consequences.
 
-For an issuer such as American Express, a model like this could function as an **early-warning system**, using repayment history, bill balances, and payment behavior to identify higher-risk accounts for monitoring or proactive intervention before they progress to serious delinquency or charge-off.
-
-# Data Fields
+## Data Fields
 
 ### Customer Information
 
-- LIMIT\_BAL – Amount of given credit (NT dollars), including individual and family credit
-- SEX – Gender (1 = male, 2 = female)
-- EDUCATION – Education level
-- MARRIAGE – Marital status
-- AGE – Age of the client
+| Variable | Description |
+|---|---|
+| `LIMIT_BAL` | Credit limit in New Taiwan dollars |
+| `SEX` | Recorded sex: 1 = male; 2 = female |
+| `EDUCATION` | 1 = graduate school; 2 = university; 3 = high school; 4 = others |
+| `MARRIAGE` | 1 = married; 2 = single; 3 = others |
+| `AGE` | Age in years |
 
-### Repayment Status (Past 6 Months)
-Repayment status variables represent how late payments were in previous months.
+### Repayment Status
 
-- PAY\_0 – Repayment status in September
-- PAY\_2 – Repayment status in August
-- PAY\_3 – Repayment status in July
-- PAY\_4 – Repayment status in June
-- PAY\_5 – Repayment status in May
-- PAY\_6 – Repayment status in April
+| Variable | Month in 2005 |
+|---|---|
+| `PAY_0` | September |
+| `PAY_2` | August |
+| `PAY_3` | July |
+| `PAY_4` | June |
+| `PAY_5` | May |
+| `PAY_6` | April |
 
-Values indicate payment delay status.
+These variables contain repayment-status codes. Positive codes represent payment delays. The supplied data also includes −2, −1, and 0; the notebook’s variable description does not fully document all these codes.
 
-### Bill Statement Amounts
-Amount of bill statements for the previous six months.
+### Bill Statements and Previous Payments
 
-- BILL\_AMT1 – September bill
-- BILL\_AMT2 – August bill
-- BILL\_AMT3 – July bill
-- BILL\_AMT4 – June bill
-- BILL\_AMT5 – May bill
-- BILL\_AMT6 – April bill
+| Variables | Description |
+|---|---|
+| `BILL_AMT1`–`BILL_AMT6` | Bill statement amounts from September through April 2005 |
+| `PAY_AMT1`–`PAY_AMT6` | Previous payment amounts from September through April 2005 |
 
-### Previous Payment Amounts
-Amount paid in the previous six months.
+All amounts are in New Taiwan dollars.
 
-- PAY\_AMT1 – September payment
-- PAY\_AMT2 – August payment
-- PAY\_AMT3 – July payment
-- PAY\_AMT4 – June payment
-- PAY\_AMT5 – May payment
-- PAY\_AMT6 – April payment
+### Target
+
+`default.payment.next.month`: next-month default indicator, renamed to `default` in the analysis.
 
 ## File Descriptions
 
-FinalProject\_Codes\_credit\_card.Rmd -> R Markdown file containing the full project workflow, including:
+- `FinalProject_Codes_credit_card.Rmd`: R Markdown workflow containing data preparation, exploratory plots, model specifications, and ROC/AUC evaluation.
+- `credit_default.csv`: The 12,000-record project dataset. The current notebook imports an online CSV rather than reading this local file.
+- `README.md`: Project overview, methodology, results, and limitations.
 
-- Data wrangling
-- Exploratory data analysis
-- Model construction
-- Model evaluation
+## Tools and Skills
 
-credit\_card\_default.csv (dataset used in the analysis) -> Raw dataset containing client financial information and payment history
-
-README.md -> Project overview, modeling explanation, and dataset documentation
-
-## Key Skills Demonstrated
-
-- Data wrangling in R
-- Exploratory data analysis
-- Predictive modeling (logistic regression & neural networks)
-- Feature engineering (interactions and nonlinear)
-- Model comparison using ROC/AUC
+- R and R Markdown
+- `dplyr` for data manipulation
+- Base R graphics for exploratory visualization
+- `glm` for regression modeling
+- `neuralnet` for neural-network modeling
+- `ROCR` for ROC curves and AUC
+- Feature engineering with interaction and quadratic terms
